@@ -1,0 +1,13 @@
+node_modules/
+
+__pycache__/
+
+uploads/*.pdf
+
+.env
+
+*.pyc
+
+venv/
+
+resume_analyzer.db

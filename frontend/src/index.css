@@ -1,0 +1,45 @@
+@import "tailwindcss";
+@reference "tailwindcss";
+
+@layer base {
+  body {
+    @apply bg-gray-50 text-gray-900 antialiased;
+  }
+}
+
+@utility card {
+  @apply bg-white border border-gray-100 rounded-2xl p-6;
+}
+
+@utility btn-primary {
+  @apply w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300
+         text-white text-sm font-medium py-3 rounded-xl transition;
+}
+
+@utility btn-secondary {
+  @apply text-sm text-blue-600 hover:text-blue-700
+         border border-blue-200 hover:border-blue-300
+         rounded-lg px-4 py-2 transition;
+}
+
+@utility section-label {
+  @apply text-xs font-medium text-gray-400 uppercase tracking-wide;
+}
+
+@utility page-container {
+  @apply max-w-3xl mx-auto px-4 py-8;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fade {
+  animation: fadeIn 0.2s ease-in-out;
+}
