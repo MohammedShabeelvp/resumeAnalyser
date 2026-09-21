@@ -1,297 +1,243 @@
-import { useEffect, useState, useCallback } from "react"
-import { useNavigate } from "react-router-dom"
-import axios from "axios"
-import Spinner from "../components/Spinner"
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import api from "../lib/api";
+import { session } from "../lib/storage";
+import useAsync from "../hooks/useAsync";
+import Spinner from "../components/Spinner";
+import ScoreBar from "../components/ScoreBar";
+
+async function fetchHistory() {
+  const res = await api.get("/history");
+  return res.data.history || [];
+}
+
+function HistoryCard({ item, onRenamed, onDeleted }) {
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState(item.name || "");
+  const [expanded, setExpanded] = useState(false);
+  const [jd, setJd] = useState(item.job_description || "");
+  const navigate = useNavigate();
+
+  const rename = useAsync((newName) => api.patch(`/history/${item.id}/rename`, { name: newName }));
+  const del = useAsync(() => api.delete(`/history/${item.id}`));
+  const rematch = useAsync((jobDescription) => api.post(`/history/${item.id}/rematch`, { job_description: jobDescription }));
+
+  const handleRename = async () => {
+    try {
+      await rename.execute(name);
+      onRenamed(item.id, name);
+      setRenaming(false);
+    } catch {
+      // error surfaced via rename.error
+    }
+  };
+
+  const handleDelete = async () => {
+    try {
+      await del.execute();
+      onDeleted(item.id);
+    } catch {
+      // error surfaced via del.error
+    }
+  };
+
+  const handleRematch = async () => {
+    if (!jd.trim()) return;
+    try {
+      const data = await rematch.execute(jd);
+      session.set("matchData", data);
+      navigate("/match");
+    } catch {
+      // error surfaced via rematch.error
+    }
+  };
+
+  return (
+    <div className="card p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          {renaming ? (
+            <div className="flex items-center gap-2">
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full rounded-lg border px-2 py-1 text-lg"
+                style={{ borderColor: "var(--color-border)", fontFamily: "var(--font-display)" }}
+                autoFocus
+              />
+              <button onClick={handleRename} disabled={rename.isLoading} className="btn-secondary px-3 py-1 text-xs">
+                Save
+              </button>
+              <button
+                onClick={() => {
+                  setRenaming(false);
+                  setName(item.name || "");
+                }}
+                className="text-xs text-(--color-muted)"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <h3 className="truncate text-lg" style={{ fontFamily: "var(--font-display)" }}>
+                {item.name}
+              </h3>
+              <button onClick={() => setRenaming(true)} className="text-(--color-muted) hover:text-(--color-teal)">
+                <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M13.5 4.5 15.5 6.5 7 15 4 16l1-3 8.5-8.5Z"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+          )}
+          <p className="truncate text-xs text-(--color-muted)">{item.filename}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {item.job_role && (
+              <span
+                className="rounded-full px-2 py-0.5 text-xs"
+                style={{ background: "#F3E8FF", color: "#6B21A8" }}
+              >
+                {item.job_role}
+              </span>
+            )}
+            <span className="text-xs text-(--color-muted)">
+              {item.analysis_time ? new Date(item.analysis_time).toLocaleString() : "—"}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <span style={{ fontFamily: "var(--font-mono)", color: "var(--color-teal)" }} className="text-lg">
+            {Math.round(item.combined_score ?? item.score ?? 0)}%
+          </span>
+          <button onClick={handleDelete} className="text-(--color-muted) hover:text-red-600">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M5 6.5h10M8.5 6.5V5a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5M6.5 6.5 7 16h6l.5-9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-2">
+        <ScoreBar label="Match score" score={item.similarity_score ?? 0} color="var(--color-teal)" />
+        <ScoreBar label="ATS score" score={item.ats_score ?? 0} color="#8B5CF6" />
+      </div>
+
+      <div className="mt-3 flex gap-4 text-xs text-(--color-muted)">
+        <span>{item.skill_count ?? "—"} skills</span>
+        <span>{item.missing_count ?? "—"} gaps</span>
+        <span>Rating: {item.ats_label ?? "—"}</span>
+      </div>
+
+      {del.error && <p className="mt-2 text-xs text-red-600">{del.error}</p>}
+      {rename.error && <p className="mt-2 text-xs text-red-600">{rename.error}</p>}
+
+      <div className="mt-4">
+        {!expanded ? (
+          <button onClick={() => setExpanded(true)} className="btn-secondary text-xs">
+            Match again
+          </button>
+        ) : (
+          <div>
+            <textarea
+              rows={4}
+              value={jd}
+              onChange={(e) => setJd(e.target.value)}
+              className="w-full rounded-lg border p-2 text-sm"
+              style={{ borderColor: "var(--color-border)" }}
+            />
+            {rematch.error && <p className="mt-1 text-xs text-red-600">{rematch.error}</p>}
+            <div className="mt-2 flex gap-2">
+              <button onClick={handleRematch} disabled={rematch.isLoading} className="btn-primary text-xs">
+                {rematch.isLoading ? "Running…" : "Run match"}
+              </button>
+              <button onClick={() => setExpanded(false)} className="text-xs text-(--color-muted)">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function HistoryPage() {
-  const [history, setHistory]           = useState([])
-  const [loading, setLoading]           = useState(true)
-  const [confirmClear, setConfirmClear] = useState(false)
-  const [editingId, setEditingId]       = useState(null)
-  const [editName, setEditName]         = useState("")
-  const [rematchId, setRematchId]       = useState(null)
-  const [rematchJD, setRematchJD]       = useState("")
-  const [rematchLoading, setRematchLoading] = useState(false)
-  const navigate = useNavigate()
+  const [items, setItems] = useState([]);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const history = useAsync(fetchHistory);
+  const clearAll = useAsync(() => api.delete("/history"));
 
   useEffect(() => {
-    const fetchHistory = () => {
-      setLoading(true)
-      axios.get("http://localhost:5000/history")
-        .then(res => setHistory(res.data.history))
-        .catch(err => console.error(err))
-        .finally(() => setLoading(false))
-    }
-    fetchHistory()
-  }, [])
-
-  const handleDeleteOne = async (id) => {
-    try {
-      await axios.delete(`http://localhost:5000/history/${id}`)
-      setHistory(prev => prev.filter(item => item.id !== id))
-    } catch (err) {
-      console.error("Delete failed:", err)
-    }
-  }
+    history.execute().then(setItems).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleClearAll = async () => {
     try {
-      await axios.delete("http://localhost:5000/history")
-      setHistory([])
-      setConfirmClear(false)
-    } catch (err) {
-      console.error("Clear failed:", err)
+      await clearAll.execute();
+      setItems([]);
+      setConfirmingClear(false);
+    } catch {
+      // error surfaced via clearAll.error
     }
-  }
-
-  const handleRename = async (id) => {
-    if (!editName.trim()) return
-    try {
-      await axios.patch(`http://localhost:5000/history/${id}/rename`, {
-        name: editName
-      })
-      setHistory(prev => prev.map(item =>
-        item.id === id ? { ...item, name: editName } : item
-      ))
-      setEditingId(null)
-      setEditName("")
-    } catch (err) {
-      console.error("Rename failed:", err)
-    }
-  }
-
-  const handleRematch = async (item) => {
-    if (!rematchJD.trim()) return
-    setRematchLoading(true)
-    try {
-      const res = await axios.post(
-        `http://localhost:5000/history/${item.id}/rematch`,
-        { job_description: rematchJD }
-      )
-
-      sessionStorage.setItem("matchData", JSON.stringify({
-        ...res.data,
-        job_description: rematchJD,
-        resume_text:     res.data.resume_text
-      }))
-
-      sessionStorage.setItem("lastJobDescription", rematchJD)
-      navigate("/match")
-
-    } catch (err) {
-      console.error("Rematch failed:", err)
-    } finally {
-      setRematchLoading(false)
-    }
-  }
-
-  const scoreColor = (score) => {
-    if (score >= 75) return "text-green-600"
-    if (score >= 50) return "text-blue-600"
-    if (score >= 30) return "text-amber-500"
-    return "text-red-500"
-  }
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-3xl mx-auto">
-
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-xl font-semibold text-gray-900">History</h1>
-            <p className="text-sm text-gray-400 mt-0.5">Past resume analyses</p>
-          </div>
-
-          {history.length > 0 && (
-            <div className="flex items-center gap-2">
-              {confirmClear ? (
-                <>
-                  <span className="text-xs text-gray-400">Are you sure?</span>
-                  <button onClick={handleClearAll}
-                    className="text-xs text-white bg-red-500 hover:bg-red-600 px-3 py-1.5 rounded-lg transition">
-                    Yes, clear all
-                  </button>
-                  <button onClick={() => setConfirmClear(false)}
-                    className="text-xs text-gray-500 border border-gray-200 px-3 py-1.5 rounded-lg transition hover:bg-gray-50">
-                    Cancel
-                  </button>
-                </>
-              ) : (
-                <button onClick={() => setConfirmClear(true)}
-                  className="text-xs text-red-500 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-lg transition">
-                  Clear all
-                </button>
-              )}
+    <div className="page-container py-12">
+      <div className="mb-8 flex items-center justify-between">
+        <h1 className="text-3xl" style={{ fontFamily: "var(--font-display)" }}>
+          Case log
+        </h1>
+        {items.length > 0 &&
+          (confirmingClear ? (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-(--color-muted)">Delete all history?</span>
+              <button onClick={handleClearAll} className="text-red-600">
+                Confirm
+              </button>
+              <button onClick={() => setConfirmingClear(false)} className="text-(--color-muted)">
+                Cancel
+              </button>
             </div>
-          )}
-        </div>
-
-        {loading && <Spinner text="Loading history..." />}
-
-        {!loading && history.length === 0 && (
-          <div className="card text-center py-12">
-            <p className="text-2xl mb-2">📭</p>
-            <p className="text-sm text-gray-400">No analyses yet</p>
-            <button onClick={() => navigate("/")}
-              className="mt-4 text-sm text-blue-600 hover:text-blue-700">
-              Upload a resume to get started →
+          ) : (
+            <button onClick={() => setConfirmingClear(true)} className="btn-secondary text-sm">
+              Clear all
             </button>
-          </div>
-        )}
-
-        <div className="space-y-4">
-          {history.map((item) => (
-            <div key={item.id} className="card">
-
-              {/* Top row — name + delete */}
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex-1 min-w-0 mr-3">
-
-                  {/* Editable name */}
-                  {editingId === item.id ? (
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={editName}
-                        onChange={e => setEditName(e.target.value)}
-                        onKeyDown={e => e.key === "Enter" && handleRename(item.id)}
-                        maxLength={50}
-                        className="text-sm border border-blue-300 rounded-lg px-3 py-1 focus:outline-none flex-1"
-                        autoFocus
-                      />
-                      <button onClick={() => handleRename(item.id)}
-                        className="text-xs text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg transition">
-                        Save
-                      </button>
-                      <button onClick={() => { setEditingId(null); setEditName("") }}
-                        className="text-xs text-gray-500 border border-gray-200 px-3 py-1.5 rounded-lg transition hover:bg-gray-50">
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-gray-800 truncate">
-                        {item.name}
-                      </p>
-                      <button
-                        onClick={() => { setEditingId(item.id); setEditName(item.name) }}
-                        className="text-gray-300 hover:text-blue-400 transition text-xs shrink-0"
-                        title="Rename"
-                      >
-                        ✏️
-                      </button>
-                    </div>
-                  )}
-
-                  {/* File + date */}
-                  <p className="text-xs text-gray-400 mt-0.5">{item.filename}</p>
-
-                  {/* Job role badge */}
-                  {item.job_role && (
-                    <span className="inline-block mt-1 text-xs bg-purple-50 text-purple-600 border border-purple-100 px-2 py-0.5 rounded-full">
-                      {item.job_role}
-                    </span>
-                  )}
-
-                  <p className="text-xs text-gray-300 mt-1">
-                    {new Date(item.analysis_time).toLocaleString()}
-                  </p>
-                </div>
-
-                {/* Score + delete */}
-                <div className="flex items-start gap-3 shrink-0">
-                  <div className="text-right">
-                    <p className={`text-xl font-semibold ${scoreColor(item.similarity_score)}`}>
-                      {item.similarity_score}%
-                    </p>
-                    <p className="text-xs text-gray-400">match</p>
-                  </div>
-                  <button
-                    onClick={() => handleDeleteOne(item.id)}
-                    className="text-gray-300 hover:text-red-400 transition text-lg leading-none mt-1"
-                    title="Delete"
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
-
-              {/* Score bars */}
-              <div className="space-y-2 mb-3">
-                {[
-                  { label: "Match score", value: item.similarity_score, color: "bg-blue-500"   },
-                  { label: "ATS score",   value: item.ats_score,        color: "bg-purple-500" },
-                ].map(({ label, value, color }) => (
-                  <div key={label}>
-                    <div className="flex justify-between text-xs text-gray-400 mb-0.5">
-                      <span>{label}</span><span>{value}%</span>
-                    </div>
-                    <div className="bg-gray-100 rounded-full h-1.5">
-                      <div className={`h-1.5 rounded-full ${color}`}
-                        style={{ width: `${value}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Stats row */}
-              <div className="flex gap-4 pt-3 border-t border-gray-50 text-xs text-gray-400 mb-3">
-                <span>⚡ {item.skill_count} skills</span>
-                <span>❌ {item.missing_count} gaps</span>
-                <span>🏷 {item.ats_label}</span>
-              </div>
-
-              {/* Rematch section */}
-              {rematchId === item.id ? (
-                <div className="border-t border-gray-50 pt-3">
-                  <p className="text-xs text-gray-400 mb-2">
-                    Paste a new job description to rematch against this resume
-                  </p>
-                  <textarea
-                    value={rematchJD}
-                    onChange={e => setRematchJD(e.target.value)}
-                    rows={4}
-                    placeholder="Paste job description here..."
-                    className="w-full text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-xl p-3 resize-none focus:outline-none focus:border-blue-300"
-                  />
-                  <div className="flex gap-2 mt-2">
-                    <button
-                      onClick={() => handleRematch(item)}
-                      disabled={rematchLoading || !rematchJD.trim()}
-                      className="flex-1 text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 py-2 rounded-xl transition"
-                    >
-                      {rematchLoading
-                        ? <span className="flex items-center justify-center gap-2">
-                            <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block" />
-                            Analysing...
-                          </span>
-                        : "Run match →"
-                      }
-                    </button>
-                    <button
-                      onClick={() => { setRematchId(null); setRematchJD("") }}
-                      className="text-sm text-gray-500 border border-gray-200 px-4 py-2 rounded-xl transition hover:bg-gray-50"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  onClick={() => {
-                    setRematchId(item.id)
-                    setRematchJD(item.job_description || "")
-                  }}
-                  className="w-full text-xs text-blue-600 hover:text-blue-700 border border-blue-100 hover:border-blue-200 hover:bg-blue-50 py-2 rounded-xl transition"
-                >
-                  🔄 Match again with new job description
-                </button>
-              )}
-
-            </div>
           ))}
+      </div>
+
+      {history.isLoading && <Spinner label="Loading history" />}
+      {history.isError && <p className="text-sm text-red-600">{history.error}</p>}
+
+      {history.isSuccess && items.length === 0 && (
+        <div className="card p-10 text-center">
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none" className="mx-auto mb-4 text-(--color-muted)">
+            <circle cx="24" cy="24" r="16" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M24 16v8l6 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <p className="mb-4 text-sm text-(--color-muted)">No analyses yet. Upload a resume to get started.</p>
+          <Link to="/" className="btn-primary inline-block">
+            Upload resume
+          </Link>
         </div>
+      )}
+
+      <div className="space-y-4">
+        {items.map((item) => (
+          <HistoryCard
+            key={item.id}
+            item={item}
+            onRenamed={(id, newName) => setItems((prev) => prev.map((it) => (it.id === id ? { ...it, name: newName } : it)))}
+            onDeleted={(id) => setItems((prev) => prev.filter((it) => it.id !== id))}
+          />
+        ))}
       </div>
     </div>
-  )
+  );
 }

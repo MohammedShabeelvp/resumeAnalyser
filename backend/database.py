@@ -19,6 +19,7 @@ def init_db():
             name          TEXT NOT NULL,
             email         TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
+            is_verified       INTEGER DEFAULT 0,
             created_at    TEXT NOT NULL
         )
     """)
@@ -237,3 +238,20 @@ def get_user_by_id(user_id):
     ).fetchone()
     conn.close()
     return dict(user) if user else None
+
+def set_user_verified(user_id):
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET is_verified = 1 WHERE id = ?", (user_id,)
+    )
+    conn.commit()
+    conn.close()
+
+def update_user_password(user_id, new_password_hash):
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (new_password_hash, user_id)
+    )
+    conn.commit()
+    conn.close()

@@ -18,13 +18,23 @@ from keyword_analyzer import analyze_gaps
 from bert_matcher     import compute_bert_similarity, get_combined_score
 from recommender      import get_job_recommendations
 from suggestion_engine import generate_suggestions
-from database import (
-    init_db, save_upload, save_analysis, get_history,
-    delete_analysis, delete_all_history, create_user,
-    get_user_by_email, get_user_by_id, rename_analysis,
-    get_analysis_by_id
-)
 from recommender import get_job_recommendations
+
+from dotenv import load_dotenv
+load_dotenv()
+
+from email_utils import (
+    init_mail, generate_verification_token, verify_email_token,
+    generate_reset_token, verify_reset_token,
+    send_verification_email, send_reset_email
+)
+from database import (
+    init_db, save_upload, save_analysis,
+    get_history, delete_analysis, delete_all_history,
+    create_user, get_user_by_email, get_user_by_id,
+    rename_analysis, get_analysis_by_id,
+    set_user_verified, update_user_password
+)
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
@@ -36,6 +46,10 @@ app.config["JWT_SECRET_KEY"]     = "your-secret-key-change-this-in-production"
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=7)
 
 jwt = JWTManager(app)
+
+init_mail(app)
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "fallback-secret")
+app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "fallback-jwt-secret")
 
 ALLOWED_EXTENSIONS = {"pdf"}
 
@@ -81,12 +95,17 @@ def register():
     if not user_id:
         return jsonify({"error": "Registration failed — please try again"}), 500
 
-    token = create_access_token(identity=str(user_id))
+    # Send verification email
+    try:
+        token = generate_verification_token(email)
+        send_verification_email(email, name, token)
+    except Exception as e:
+        print(f"Email send failed: {e}")
+        # Don't block registration if email fails
 
     return jsonify({
-        "message": "Account created successfully",
-        "token":   token,
-        "user":    {"id": user_id, "name": name, "email": email}
+        "message": "Account created. Please check your email to verify your account.",
+        "requires_verification": True
     }), 201
 
 @app.route("/login", methods=["POST"])
@@ -110,6 +129,14 @@ def login():
 
     if not password_match:
         return jsonify({"error": "Invalid email or password"}), 401
+
+    # Block unverified users
+    if not user["is_verified"]:
+        return jsonify({
+            "error": "Please verify your email before logging in.",
+            "requires_verification": True,
+            "email": email
+        }), 403
 
     token = create_access_token(identity=str(user["id"]))
 
@@ -397,6 +424,119 @@ def rematch_analysis(analysis_id):
         "suggestions":      suggestions,
         "resume_text":      resume_text,
         "saved_to_history": False
+    }), 200
+
+@app.route("/verify-email/<token>", methods=["GET"])
+def verify_email(token):
+    email = verify_email_token(token)
+
+    if not email:
+        return jsonify({
+            "error": "Verification link is invalid or has expired."
+        }), 400
+
+    user = get_user_by_email(email)
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    if user["is_verified"]:
+        return jsonify({"message": "Email already verified"}), 200
+
+    set_user_verified(user["id"])
+
+    return jsonify({
+        "message": "Email verified successfully. You can now log in."
+    }), 200
+
+@app.route("/resend-verification", methods=["POST"])
+def resend_verification():
+    data  = request.get_json()
+    email = data.get("email", "").strip().lower()
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    user = get_user_by_email(email)
+
+    if not user:
+        # Don't reveal whether email exists
+        return jsonify({"message": "If that email exists, a verification link has been sent."}), 200
+
+    if user["is_verified"]:
+        return jsonify({"message": "Email is already verified"}), 200
+
+    try:
+        token = generate_verification_token(email)
+        send_verification_email(email, user["name"], token)
+    except Exception as e:
+        print(f"Email send failed: {e}")
+        return jsonify({"error": "Failed to send email. Please try again."}), 500
+
+    return jsonify({
+        "message": "Verification email sent. Please check your inbox."
+    }), 200
+
+@app.route("/forgot-password", methods=["POST"])
+def forgot_password():
+    data  = request.get_json()
+    email = data.get("email", "").strip().lower()
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    user = get_user_by_email(email)
+
+    # Always return success to prevent email enumeration
+    if not user:
+        return jsonify({
+            "message": "If that email exists, a reset link has been sent."
+        }), 200
+
+    try:
+        token = generate_reset_token(email)
+        send_reset_email(email, user["name"], token)
+    except Exception as e:
+        print(f"Email send failed: {e}")
+        return jsonify({"error": "Failed to send email. Please try again."}), 500
+
+    return jsonify({
+        "message": "Password reset email sent. Please check your inbox."
+    }), 200
+
+@app.route("/reset-password", methods=["POST"])
+def reset_password():
+    data     = request.get_json()
+    token    = data.get("token", "")
+    password = data.get("password", "")
+
+    if not token or not password:
+        return jsonify({"error": "Token and password are required"}), 400
+
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+
+    email = verify_reset_token(token)
+
+    if not email:
+        return jsonify({
+            "error": "Reset link is invalid or has expired."
+        }), 400
+
+    user = get_user_by_email(email)
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    new_hash = bcrypt.hashpw(
+        password.encode("utf-8"),
+        bcrypt.gensalt()
+    ).decode("utf-8")
+
+    update_user_password(user["id"], new_hash)
+
+    return jsonify({
+        "message": "Password reset successfully. You can now log in."
     }), 200
 
 if __name__ == "__main__":

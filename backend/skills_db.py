@@ -2,7 +2,7 @@ SKILLS = {
     "programming_languages": [
         "Python", "JavaScript", "TypeScript", "Java", "C", "C++",
         "C#", "Go", "Rust", "Swift", "Kotlin", "PHP", "Ruby", "Scala"
-    ],
+    ],  
     "frontend": [
         "React", "Vue", "Angular", "HTML", "CSS", "Tailwind",
         "Next.js", "Redux", "jQuery", "Bootstrap", "Sass"
